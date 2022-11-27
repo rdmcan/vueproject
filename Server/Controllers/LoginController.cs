@@ -1,0 +1,75 @@
+﻿/*  INFO-3067 -  
+Student Name: Ruben Dario Mejia Cardona
+Student Number:0864646
+Brief: Define the Controller to handle URL request by the action methods */
+
+using System;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
+using Casestudy.DAL;
+using Casestudy.DAL.DAO;
+using Casestudy.DAL.DomainClasses;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.Configuration;
+using Casestudy.Helpers;
+using Microsoft.AspNetCore.Authorization;
+
+namespace Casestudy.Controllers
+{
+    [Authorize] //Only authorized customers can have access to the data from the server
+    [Route("api/[controller]")]
+    [ApiController]
+    public class LoginController : ControllerBase
+    {
+        AppDbContext _db;
+        IConfiguration configuration;
+        public LoginController(AppDbContext context, IConfiguration config)
+        {
+            _db = context;
+            this.configuration = config;
+        }
+
+        [HttpPost]
+        [AllowAnonymous] //Unathourized customers/clients can access to the data from the server
+        [Produces("application/json")]
+        public ActionResult<CustomerHelper> Index(CustomerHelper helper)
+        {
+            CustomerDAO dao = new CustomerDAO(_db);
+            Customer customer = dao.GetByEmail(helper.email);
+            if (VerifyPassword(helper.password, customer.Hash, customer.Salt))
+            {
+                helper.password = "";
+                var appSettings = configuration.GetSection("AppSettings").GetValue<string>("Secret");
+                // authentication successful so generate jwt token
+                var tokenHandler = new JwtSecurityTokenHandler();
+                var key = Encoding.ASCII.GetBytes(appSettings);
+                var tokenDescriptor = new SecurityTokenDescriptor
+                {
+                    Subject = new ClaimsIdentity(new Claim[]
+                {
+                new Claim(ClaimTypes.Name, customer.Id.ToString())
+                }),
+                    Expires = DateTime.UtcNow.AddDays(7),
+                    SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
+                };
+                var token = tokenHandler.CreateToken(tokenDescriptor);
+                string returnToken = tokenHandler.WriteToken(token);
+                helper.token = returnToken;
+            }
+            else
+            {
+                helper.token = "customer name or password invalid - login failed";
+            }
+            return helper;
+        }
+        public static bool VerifyPassword(string enteredPassword, string storedHash, string storedSalt)
+        {
+            var saltBytes = Convert.FromBase64String(storedSalt);
+            var rfc2898DeriveBytes = new Rfc2898DeriveBytes(enteredPassword, saltBytes, 10000);
+            return Convert.ToBase64String(rfc2898DeriveBytes.GetBytes(256)) == storedHash;
+        }
+    }
+}
